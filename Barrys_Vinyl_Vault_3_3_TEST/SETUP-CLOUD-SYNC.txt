@@ -1,0 +1,30 @@
+BARRY’S VINYL VAULT 2.2 — OPTIONAL CLOUD SYNC
+
+IMPORTANT: Cloud sync is NOT enabled just by uploading this ZIP to Netlify.
+
+1. Create a Supabase project at https://supabase.com/ and enable Email/Password authentication. Create a user in Supabase Authentication (or enable signups). Confirm the email if your project requires confirmation.
+2. In Supabase SQL Editor, run the SQL below. This creates a table protected by row-level security: only the signed-in owner can access their collection.
+3. Find your Project URL and publishable/anon key in the Supabase dashboard. NEVER use a service-role or secret key in the app.
+4. In Vinyl Vault 2.2, open Cloud sync and sign in with your Supabase email/password. On WINDOWS, back up your verified collection and click Upload this collection.
+5. On ANDROID, back up any phone changes first, sign in with the SAME account, and click Download cloud collection.
+6. Thereafter, changes are automatically uploaded while online, and the app checks for cloud changes roughly every 45 seconds while open. Sign-in is stored only for the current browser tab/session; sign in again after closing the browser if needed.
+7. If both devices edit before syncing, the app pauses with a conflict warning; export JSON backups on both devices and deliberately choose Upload or Download. Do not assume simultaneous offline changes will merge.
+8. Large embedded photo files can exceed Supabase request/database limits; use cover URLs where possible.
+
+SQL (run once in Supabase SQL Editor):
+
+create table if not exists public.vault_collections (
+ user_id uuid primary key references auth.users(id) on delete cascade,
+ records jsonb not null default '[]'::jsonb,
+ updated_at timestamptz not null default now()
+);
+alter table public.vault_collections enable row level security;
+create policy "Owner can select collection" on public.vault_collections for select to authenticated using (auth.uid() = user_id);
+create policy "Owner can insert collection" on public.vault_collections for insert to authenticated with check (auth.uid() = user_id);
+create policy "Owner can update collection" on public.vault_collections for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+SECURITY NOTES
+- Keep your Supabase password private. Do not send it to ChatGPT.
+- Your Netlify static website and starter-records.json remain publicly accessible; do not bundle private collection notes in starter data.
+- Cloud synchronization uses HTTPS, Supabase authentication and row-level security, but is not end-to-end encrypted.
+- Keep independent JSON backups.
