@@ -12,11 +12,11 @@ function createLogin(){
  const panel=document.createElement('section');panel.id='marketplaceLogin';panel.hidden=true;
  panel.style.cssText='border:1px solid #777;border-radius:10px;padding:16px;margin:12px 0;max-width:580px';
  panel.innerHTML='<h3>Marketplace Test — separate sign-in</h3><p>Use the NEW Marketplace Test project, not your private Vault project. Only use the publishable key; never enter a secret/service-role key.</p><form id="marketplaceLoginForm"><label>Marketplace Test Project URL<br><input name="url" type="url" required placeholder="https://your-project.supabase.co" style="width:100%"></label><br><label>Publishable key<br><input name="pub" type="text" required autocomplete="off" placeholder="sb_publishable_..." style="width:100%"></label><br><label>Test account email<br><input name="email" type="email" required autocomplete="username" style="width:100%"></label><br><label>Test account password<br><input name="password" type="password" required autocomplete="current-password" style="width:100%"></label><br><button type="submit">Sign in to Marketplace Test</button> <button type="button" id="marketplaceLogout">Sign out</button></form><p id="marketplaceLoginMessage" role="status"></p>';
- $('connect').insertAdjacentElement('afterend',panel);
+ $('connect').closest('.row').insertAdjacentElement('afterend',panel);
  const saved=readJson(localStorage,SETTINGS)||{};
  for(const field of ['url','pub','email'])if(saved[field])panel.querySelector('[name="'+field+'"]').value=saved[field];
  $('marketplaceLoginForm').onsubmit=async e=>{
-  e.preventDefault();const f=Object.fromEntries(new FormData(e.currentTarget).entries());
+  e.preventDefault();const loginForm=e.currentTarget;const f=Object.fromEntries(new FormData(loginForm).entries());
   const msg=$('marketplaceLoginMessage');msg.textContent='Signing in…';
   const url=f.url.trim().replace(/\/$/,'');const pub=f.pub.trim();
   if(!validUrl(url)||!pub.startsWith('sb_publishable_')){msg.textContent='Enter a valid Supabase Project URL and sb_publishable_ key.';return}
@@ -25,7 +25,7 @@ function createLogin(){
    const data=await res.json();if(!res.ok||!data.access_token||!data.user?.id)throw Error(data.msg||data.error_description||data.message||'Sign-in failed');
    config={url,pub,email:f.email.trim(),uid:data.user.id,token:data.access_token,refreshToken:data.refresh_token};
    localStorage.setItem(SETTINGS,JSON.stringify({url,pub,email:config.email}));persistSession();
-   e.currentTarget.elements.password.value='';msg.textContent='Signed in successfully.';hideLogin();status('Marketplace Test: signed in as '+config.email);await load();
+   loginForm.elements.password.value='';msg.textContent='Signed in successfully.';hideLogin();status('Marketplace Test: signed in as '+config.email);await load();
   }catch(err){msg.textContent='Sign-in failed: '+err.message}
  };
  $('marketplaceLogout').onclick=()=>{config=null;sessionStorage.removeItem(AUTH);listings=[];render();status('Signed out of Marketplace Test.');showLogin()};
@@ -49,5 +49,5 @@ $('listings').onclick=async e=>{const offer=e.target.closest('[data-offer]'),clo
 $('listingForm').onsubmit=async e=>{e.preventDefault();if(!config?.uid)return alert('Connect your account first');const f=Object.fromEntries(new FormData(e.target).entries());if(!confirm('Publish '+f.artist+' — '+f.album+' to the PUBLIC marketplace? Only listing form fields will be shared.'))return;const payload={seller_id:config.uid,artist:f.artist.trim(),album:f.album.trim(),listing_type:f.listing_type,asking_price:Number(f.asking_price),currency:f.currency,condition:f.condition.trim(),pressing:f.pressing.trim(),region:f.region.trim(),description:f.description.trim(),image_url:f.image_url.trim()||null};try{await api('marketplace_listings','POST',payload);$('publishStatus').textContent='Published successfully.';e.target.reset();await load()}catch(err){$('publishStatus').textContent='Not published: '+err.message}};
 $('offerForm').onsubmit=async e=>{e.preventDefault();if(!chosen)return;const f=Object.fromEntries(new FormData(e.target).entries());try{await api('marketplace_offers','POST',{listing_id:chosen.id,buyer_id:config.uid,offer_type:f.offer_type,offer_amount:f.offer_amount?Number(f.offer_amount):null,currency:f.currency,message:f.message.trim()});$('offerDialog').close();alert('Offer sent. The seller can view it in their offers inbox.')}catch(err){$('offerStatus').textContent='Offer not sent: '+err.message}};
 $('myOffers').onclick=async()=>{try{const rows=await api('marketplace_offers','GET',null,'?select=id,listing_id,buyer_id,offer_type,offer_amount,currency,message,status,created_at&order=created_at.desc&limit=100');$('offersList').innerHTML=rows.map(r=>'<section><b>'+esc(r.offer_type)+' · '+esc(r.status)+'</b><p>'+esc(r.message)+'</p><small>Listing '+esc(r.listing_id)+' · '+new Date(r.created_at).toLocaleDateString()+'</small></section>').join('')||'<p>No offers yet.</p>';$('offersDialog').showModal()}catch(e){alert('Cannot load offers: '+e.message)}};
-$('closeOffer').onclick=()=>$('offerDialog').close();$('closeOffers').onclick=()=>$('offersDialog').close();$('connect').onclick=()=>{showLogin();};$('refresh').onclick=load;$('search').oninput=render;$('type').onchange=render;fillRecords();createLogin();connect().then(ok=>{if(ok)load();else showLogin()});
+$('closeOffer').onclick=()=>$('offerDialog').close();$('closeOffers').onclick=()=>$('offersDialog').close();$('connect').textContent='Connect to Marketplace Test';$('connect').onclick=()=>{showLogin();};$('refresh').onclick=load;$('search').oninput=render;$('type').onchange=render;fillRecords();createLogin();const oldHelp=$('connect').closest('.row').nextElementSibling;if(oldHelp && oldHelp.classList.contains('muted'))oldHelp.textContent='Use your separate Marketplace Test Supabase account. Your private Vault sign-in is not used here.';connect().then(ok=>{if(ok)load();else showLogin()});
 })();
