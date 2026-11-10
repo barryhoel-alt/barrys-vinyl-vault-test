@@ -1,0 +1,1 @@
+Version 3.6.1: restores automatic sync after reopening when local and cloud collections match. If they differ, sync pauses rather than overwriting either copy. Session is remembered in browser localStorage; use Sign Out on shared computers. Upload all files to a NEW version folder; keep 3.6 intact.
