@@ -35,7 +35,7 @@ const saved=readJson(localStorage,SETTINGS)||{};
  $('marketplaceLogout').onclick=()=>{if(window.vv498Clear)window.vv498Clear();config=null;sessionStorage.removeItem(AUTH);listings=[];offerRows=[];ownedListings=[];render();renderDashboard();status('Signed out of Marketplace Test.');showLogin();load()};
 }
 async function connect(){
- readJson(localStorage,SETTINGS)(localStorage,SETTINGS),session=readJson(sessionStorage,AUTH);
+ const saved=readJson(localStorage,SETTINGS),session=readJson(sessionStorage,AUTH);
  if(!saved?.url||!saved?.pub||!session?.refreshToken||session.url!==saved.url){status('Marketplace Test is not signed in. Click Connect to sign in.');return false}
  if(!validUrl(saved.url)||!saved.pub.startsWith('sb_publishable_')){status('Invalid Marketplace Test configuration.');return false}
  try{
