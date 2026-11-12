@@ -81,7 +81,7 @@ async function applyRelease(){
 }
 function fillRecords(){let rows=[];try{rows=JSON.parse(localStorage.getItem(LOCAL)||'[]');if(!Array.isArray(rows))rows=[]}catch{}$('recordSelect').innerHTML='<option value="">Manual listing</option>'+rows.map((r,i)=>'<option value="'+i+'">'+esc((r.artist||'')+' — '+(r.album||'')+' ('+(r.id||'')+')')+'</option>').join('');$('recordSelect').onchange=()=>{const r=rows[Number($('recordSelect').value)];if($('recordSelect').value===''||!r)return;const f=$('listingForm');for(const [k,v] of Object.entries({artist:r.artist,album:r.album,pressing:r.pressing,condition:r.condition,region:r.country,image_url:/^https:\/\//i.test(r.cover||'')?r.cover:''})){if(f.elements[k])f.elements[k].value=v||''}}}
 async function load(){
- ensureBrowseControls();const request=++browseRequest;browseLoading=true;updateBrowseControls();
+ if (typeof ensureBrowseControls === 'function') ensureBrowseControls();const request=++browseRequest;browseLoading=true;updateBrowseControls();
  $('listingStatus').textContent='Loading public listings…';
  try{
   const saved={...window.VV_MARKETPLACE_PUBLIC_CONFIG,...(readJson(localStorage,SETTINGS)||{})};
