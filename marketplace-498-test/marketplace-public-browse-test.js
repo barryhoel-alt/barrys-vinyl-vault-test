@@ -87,7 +87,7 @@ async function load(){
    listings=await api('marketplace_listings','GET',null,'?select=id,seller_id,artist,album,listing_type,asking_price,currency,condition,pressing,region,description,image_url,tracklist,release_mbid,created_at&status=eq.active&order=created_at.desc&limit=100');
    render();await refreshDashboard();
   }else{
-   readJson(localStorage,SETTINGS)(localStorage,SETTINGS);
+   const saved={...window.VV_MARKETPLACE_PUBLIC_CONFIG,...(readJson(localStorage,SETTINGS)||{})};
    if(!saved?.url||!saved?.pub||!validUrl(saved.url)||!saved.pub.startsWith('sb_publishable_')){
     listings=[];render();$('listingStatus').textContent='To enable guest browsing on this device, enter the Marketplace Test project URL and publishable key in My Account once.';return;
    }
