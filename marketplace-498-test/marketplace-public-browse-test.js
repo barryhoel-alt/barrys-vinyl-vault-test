@@ -17,7 +17,7 @@ function createLogin(){
  panel.style.cssText='border:1px solid #777;border-radius:10px;padding:16px;margin:12px 0;max-width:580px';
  panel.innerHTML='<h3>Marketplace Test — separate sign-in</h3><p>Use the NEW Marketplace Test project, not your private Vault project. Only use the publishable key; never enter a secret/service-role key.</p><form id="marketplaceLoginForm"><label>Marketplace Test Project URL<br><input name="url" type="url" required placeholder="https://your-project.supabase.co" style="width:100%"></label><br><label>Publishable key<br><input name="pub" type="text" required autocomplete="off" placeholder="sb_publishable_..." style="width:100%"></label><br><label>Test account email<br><input name="email" type="email" required autocomplete="username" style="width:100%"></label><br><label>Test account password<br><input name="password" type="password" required autocomplete="current-password" style="width:100%"></label><br><button type="submit">Sign in to Marketplace Test</button> <button type="button" id="marketplaceLogout">Sign out</button></form><p id="marketplaceLoginMessage" role="status"></p>';
  $('connect').closest('.row').insertAdjacentElement('afterend',panel);
- const saved=readJson(localStorage,SETTINGS)||{};
+ readJson(localStorage,SETTINGS)(localStorage,SETTINGS)||{};
  for(const field of ['url','pub','email'])if(saved[field])panel.querySelector('[name="'+field+'"]').value=saved[field];
  $('marketplaceLoginForm').onsubmit=async e=>{
   e.preventDefault();const loginForm=e.currentTarget;const f=Object.fromEntries(new FormData(loginForm).entries());
@@ -35,7 +35,7 @@ function createLogin(){
  $('marketplaceLogout').onclick=()=>{if(window.vv498Clear)window.vv498Clear();config=null;sessionStorage.removeItem(AUTH);listings=[];offerRows=[];ownedListings=[];render();renderDashboard();status('Signed out of Marketplace Test.');showLogin();load()};
 }
 async function connect(){
- const saved=readJson(localStorage,SETTINGS),session=readJson(sessionStorage,AUTH);
+ readJson(localStorage,SETTINGS)(localStorage,SETTINGS),session=readJson(sessionStorage,AUTH);
  if(!saved?.url||!saved?.pub||!session?.refreshToken||session.url!==saved.url){status('Marketplace Test is not signed in. Click Connect to sign in.');return false}
  if(!validUrl(saved.url)||!saved.pub.startsWith('sb_publishable_')){status('Invalid Marketplace Test configuration.');return false}
  try{
@@ -87,7 +87,7 @@ async function load(){
    listings=await api('marketplace_listings','GET',null,'?select=id,seller_id,artist,album,listing_type,asking_price,currency,condition,pressing,region,description,image_url,tracklist,release_mbid,created_at&status=eq.active&order=created_at.desc&limit=100');
    render();await refreshDashboard();
   }else{
-   const saved=readJson(localStorage,SETTINGS);
+   readJson(localStorage,SETTINGS)(localStorage,SETTINGS);
    if(!saved?.url||!saved?.pub||!validUrl(saved.url)||!saved.pub.startsWith('sb_publishable_')){
     listings=[];render();$('listingStatus').textContent='To enable guest browsing on this device, enter the Marketplace Test project URL and publishable key in My Account once.';return;
    }
