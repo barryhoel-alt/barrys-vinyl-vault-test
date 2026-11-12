@@ -17,7 +17,7 @@ function createLogin(){
  panel.style.cssText='border:1px solid #777;border-radius:10px;padding:16px;margin:12px 0;max-width:580px';
  panel.innerHTML='<h3>Marketplace Test — separate sign-in</h3><p>Use the NEW Marketplace Test project, not your private Vault project. Only use the publishable key; never enter a secret/service-role key.</p><form id="marketplaceLoginForm"><label>Marketplace Test Project URL<br><input name="url" type="url" required placeholder="https://your-project.supabase.co" style="width:100%"></label><br><label>Publishable key<br><input name="pub" type="text" required autocomplete="off" placeholder="sb_publishable_..." style="width:100%"></label><br><label>Test account email<br><input name="email" type="email" required autocomplete="username" style="width:100%"></label><br><label>Test account password<br><input name="password" type="password" required autocomplete="current-password" style="width:100%"></label><br><button type="submit">Sign in to Marketplace Test</button> <button type="button" id="marketplaceLogout">Sign out</button></form><p id="marketplaceLoginMessage" role="status"></p>';
  $('connect').closest('.row').insertAdjacentElement('afterend',panel);
- readJson(localStorage,SETTINGS)(localStorage,SETTINGS)||{};
+const saved=readJson(localStorage,SETTINGS)||{};
  for(const field of ['url','pub','email'])if(saved[field])panel.querySelector('[name="'+field+'"]').value=saved[field];
  $('marketplaceLoginForm').onsubmit=async e=>{
   e.preventDefault();const loginForm=e.currentTarget;const f=Object.fromEntries(new FormData(loginForm).entries());
