@@ -140,11 +140,16 @@ async function load(){
   const headers={apikey:project.pub,Prefer:'count=exact'};
   if(config?.token)headers.Authorization='Bearer '+config.token;
   const response=await fetch(project.url.replace(/\/$/,'')+'/rest/v1/'+endpoint+query,{headers});
-  const result=await response.json();if(!response.ok)throw Error(result?.message||'HTTP '+response.status);
+  const result=await response.json();
   if(request!==browseRequest)return;
+  const count=response.headers.get('content-range')?.match(/\/(\d+)$/);
+  const lastPage=count?Math.max(0,Math.ceil(Number(count[1])/PAGE_SIZE)-1):0;
+  if(browsePage>0 && (response.status===416 || (response.ok && !result.length))){
+   browsePage=Math.min(browsePage-1,lastPage);
+   return load();
+  }
+  if(!response.ok)throw Error(result?.message||'HTTP '+response.status);
   listings=Array.isArray(result)?result:[];
-  const contentRange=response.headers.get('content-range');
-  const count=contentRange?.match(/\/(\d+)$/);
   browseTotal=count?Number(count[1]):browsePage*PAGE_SIZE+listings.length;
   browseLoading=false;render();
   if(config?.token)await refreshDashboard();
