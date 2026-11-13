@@ -32,7 +32,7 @@ const saved=readJson(localStorage,SETTINGS)||{};
    loginForm.elements.password.value='';msg.textContent='Signed in successfully.';hideLogin();status('Marketplace Test: signed in as '+config.email);await load();
   }catch(err){msg.textContent='Sign-in failed: '+err.message}
  };
- $('marketplaceLogout').onclick=()=>{if(window.vv498Clear)window.vv498Clear();config=null;sessionStorage.removeItem(AUTH);listings=[];offerRows=[];offerListings.clear();ownedListings=[];render();renderDashboard();status('Signed out of Marketplace Test.');showLogin();load()};
+ $('marketplaceLogout').onclick=()=>{if(window.vv498Clear)window.vv498Clear();config=null;sessionStorage.removeItem(AUTH);resetModeration();listings=[];offerRows=[];offerListings.clear();ownedListings=[];render();renderDashboard();status('Signed out of Marketplace Test.');showLogin();load()};
 }
 async function connect(){
  const saved=readJson(localStorage,SETTINGS),session=readJson(sessionStorage,AUTH);
@@ -196,6 +196,133 @@ function showSellerPhotos(container, urls) {
  displayPhoto();
  container.replaceWith(gallery);
 }
+const reportReasons = {
+ counterfeit: 'Suspected counterfeit',
+ misleading: 'Misleading photos or description',
+ spam: 'Spam',
+ other: 'Other',
+};
+
+function addReportForm(listing) {
+ if (listing.seller_id === config?.uid && config?.uid) return;
+ const section=document.createElement('section');
+ section.innerHTML='<button type="button">Report listing</button><form hidden>'+
+   '<label>Reason <select name="reason" required>'+
+   '<option value="">Choose a reason</option>'+
+   Object.entries(reportReasons).map(([value,label])=>'<option value="'+value+'">'+label+'</option>').join('')+
+   '</select></label><label>Note (optional)<textarea name="note" maxlength="500"></textarea></label>'+
+   '<button type="submit">Send report</button></form><p role="status"></p>';
+ const button=section.querySelector('button');
+ const form=section.querySelector('form');
+ const feedback=section.querySelector('[role=status]');
+ button.onclick=()=>{
+  if(!config?.uid){
+   $('detailsDialog').close();
+   alert('Sign in to report a listing.');
+   document.querySelector('[data-nav-view="account"]')?.click();
+   return;
+  }
+  form.hidden=!form.hidden;
+  if(!form.hidden)form.elements.reason.focus();
+ };
+ form.onsubmit=async event=>{
+  event.preventDefault();
+  const submit=form.querySelector('[type=submit]');
+  submit.disabled=true;
+  try{
+   await api('rpc/marketplace_report_listing','POST',{
+    p_listing_id:listing.id,p_reason:form.elements.reason.value,p_note:form.elements.note.value
+   });
+   form.hidden=true;
+   button.disabled=true;
+   feedback.textContent='Report received for review.';
+  }catch(error){feedback.textContent='Could not send report: '+error.message;}
+  finally{submit.disabled=false;}
+ };
+ $('detailsContent').append(section);
+}
+
+const moderationButton=document.createElement('button');
+moderationButton.type='button';
+moderationButton.textContent='Moderation queue';
+moderationButton.hidden=true;
+$('dashboardPanel').before(moderationButton);
+const moderationDialog=document.createElement('dialog');
+moderationDialog.setAttribute('aria-label','Moderation queue');
+moderationDialog.innerHTML='<h2>Moderation queue</h2><p role="status"></p><div></div><button type="button">Close</button>';
+document.body.append(moderationDialog);
+moderationDialog.querySelector('button').onclick=()=>moderationDialog.close();
+const moderationStatus=moderationDialog.querySelector('[role=status]');
+const moderationRows=moderationDialog.querySelector('div');
+let moderationSession=null;
+
+async function checkModerator(session) {
+ if(moderationSession===session)return;
+ moderationSession=session;
+ moderationButton.hidden=true;
+ try{
+  const allowed=await api('rpc/marketplace_can_moderate','POST',{});
+  if(config===session)moderationButton.hidden=allowed!==true;
+ }catch{
+  if(moderationSession===session)moderationSession=null;
+ }
+}
+
+function resetModeration(){
+ moderationSession=null;
+ moderationButton.hidden=true;
+ moderationRows.replaceChildren();
+ if(moderationDialog.open)moderationDialog.close();
+}
+
+async function loadModeration(){
+ const session=config;
+ moderationRows.replaceChildren();
+ moderationStatus.textContent='Loading reports…';
+ try{
+  const rows=await api('rpc/marketplace_report_queue','POST',{});
+  if(config!==session||!moderationDialog.open)return;
+  moderationStatus.textContent=rows.length?'':'No open reports.';
+  for(const report of rows){
+   const card=document.createElement('article');
+   card.className='offer-card';
+   const heading=document.createElement('h3');
+   heading.textContent=report.artist+' — '+report.album;
+   const reason=document.createElement('p');
+   reason.textContent=reportReasons[report.reason]||report.reason;
+   const note=document.createElement('p');
+   note.textContent=report.note;
+   const date=document.createElement('small');
+   date.textContent=new Date(report.created_at).toLocaleString();
+   const actions=document.createElement('div');
+   actions.className='row';
+   card.append(heading,reason,note,date,actions);
+   for(const [action,label] of [['dismissed','Dismiss report'],['hidden','Hide listing']]){
+    const button=document.createElement('button');
+    button.type='button';
+    button.textContent=label;
+    button.onclick=async ()=>{
+     if(!confirm(action==='hidden'?'Hide this listing from Browse?':'Dismiss this report?'))return;
+     for(const control of actions.children)control.disabled=true;
+     try{
+      await api('rpc/marketplace_resolve_report','POST',{p_report_id:report.id,p_action:action});
+      await loadModeration();
+      if(action==='hidden')await load();
+     }catch(error){
+      moderationStatus.textContent='Could not resolve report: '+error.message;
+      for(const control of actions.children)control.disabled=false;
+     }
+    };
+    actions.append(button);
+   }
+   moderationRows.append(card);
+  }
+ }catch(error){
+  if(config===session)moderationStatus.textContent='Could not load reports: '+error.message;
+ }
+}
+moderationButton.onclick=()=>{moderationDialog.showModal();loadModeration();};
+
 function buyerActions(listing) {
  const active=offerRows.find(row=>row.listing_id===listing.id&&row.buyer_id===config?.uid&&
    ['pending','countered','accepted'].includes(row.status));
@@ -238,7 +365,7 @@ async function requestPurchase(button) {
 }
 function render(){const filtered=listings;$('listingStatus').textContent=browseTotal+' matching public listing(s) · showing '+(filtered.length?browsePage*PAGE_SIZE+1:0)+'–'+(browsePage*PAGE_SIZE+filtered.length);updateBrowseControls();$('listings').innerHTML=filtered.map(r=>{const coverUrl=r.image_url;const cover='<div class="cover-frame">'+(coverUrl&&/^https:\/\//i.test(coverUrl)?'<img alt="Album cover for '+esc(r.artist+' — '+r.album)+'" loading="lazy" src="'+esc(coverUrl)+'" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><div class="cover-placeholder" hidden><div class="mini-record"></div><span>Artwork unavailable</span></div>':'<div class="cover-placeholder"><div class="mini-record"></div><span>Cover not added yet</span></div>')+'</div>';return '<article class="listing">'+cover+'<h3>'+esc(r.artist)+' — '+esc(r.album)+'</h3><span class="format-tag">'+esc(itemFormat(r))+'</span>'+sellerRating(r.seller_id)+'<p class="price">'+esc(price(r))+'</p><p>'+esc(r.listing_type)+' · '+esc(r.condition||'Condition not specified')+'</p><small>'+esc(r.pressing||'')+' · '+esc(r.region||'')+'</small><div class="listing-actions"><button data-details="'+esc(r.id)+'">'+ (listingPhotoUrls(r).length?'View details &amp; photos':'View Album Details')+'</button>'+((config?.uid&&config.uid===r.seller_id)?'<button data-edit="'+esc(r.id)+'">Edit / add photos</button><button data-close="'+esc(r.id)+'">Withdraw</button>':buyerActions(r))+'</div></article>'}).join('')||'<p class="muted">No matching listings yet.</p>'}
 let editingId=null;
-function openDetails(r){const lines=tracks(r);const urls=listingPhotoUrls(r);$('detailsContent').innerHTML='<h2>'+esc(r.artist)+' — '+esc(r.album)+'</h2>'+(r.image_url&&/^https:\/\//i.test(r.image_url)?'<img alt="Album cover" style="max-width:260px;width:100%;object-fit:contain" src="'+esc(r.image_url)+'" onerror="this.remove()">':'')+(urls.length?'<div data-seller-photos></div>':'')+'<p class="price">'+esc(price(r))+'</p><p><b>Condition:</b> '+esc(r.condition||'Not specified')+'</p><p><b>Pressing:</b> '+esc(r.pressing||'Not specified')+'</p><p><b>Region:</b> '+esc(r.region||'Not specified')+'</p><p><b>Listing type:</b> '+esc(r.listing_type)+'</p><p>'+esc(cleanDescription(r.description))+'</p><h3>Track listing</h3>'+(lines.length?'<div style="white-space:pre-line">'+lines.map(esc).join('\n')+'</div>':'<p class="muted">No tracks supplied.</p>');if(urls.length)showSellerPhotos($('detailsContent').querySelector('[data-seller-photos]'),urls);$('detailsDialog').showModal()}
+function openDetails(r){const lines=tracks(r);const urls=listingPhotoUrls(r);$('detailsContent').innerHTML='<h2>'+esc(r.artist)+' — '+esc(r.album)+'</h2>'+(r.image_url&&/^https:\/\//i.test(r.image_url)?'<img alt="Album cover" style="max-width:260px;width:100%;object-fit:contain" src="'+esc(r.image_url)+'" onerror="this.remove()">':'')+(urls.length?'<div data-seller-photos></div>':'')+'<p class="price">'+esc(price(r))+'</p><p><b>Condition:</b> '+esc(r.condition||'Not specified')+'</p><p><b>Pressing:</b> '+esc(r.pressing||'Not specified')+'</p><p><b>Region:</b> '+esc(r.region||'Not specified')+'</p><p><b>Listing type:</b> '+esc(r.listing_type)+'</p><p>'+esc(cleanDescription(r.description))+'</p><h3>Track listing</h3>'+(lines.length?'<div style="white-space:pre-line">'+lines.map(esc).join('\n')+'</div>':'<p class="muted">No tracks supplied.</p>');if(urls.length)showSellerPhotos($('detailsContent').querySelector('[data-seller-photos]'),urls);addReportForm(r);$('detailsDialog').showModal()}
 function openEdit(r){if(r.seller_id!==config?.uid)return;editingId=r.id;editPhotos.reset(r.photo_paths||[],photoProject());const f=$('editListingForm');f.elements.allow_offers.checked=r.allow_offers!==false;f.elements.media_format.value=itemFormat(r);for(const name of ['artist','album','listing_type','asking_price','currency','condition','pressing','region','description','image_url'])f.elements[name].value=name==='description'?cleanDescription(r[name]):(r[name]??'');f.elements.tracklist_editor.value=tracks(r).join('\n');$('editStatus').textContent='';$('editDialog').showModal()}
 $('editListingForm').onsubmit=async e=>{e.preventDefault();if(!editingId)return;const f=Object.fromEntries(new FormData(e.currentTarget).entries());const payload={artist:f.artist.trim(),album:f.album.trim(),listing_type:f.listing_type,allow_offers:f.allow_offers==='on',asking_price:Number(f.asking_price),currency:f.currency,condition:f.condition.trim(),pressing:f.pressing.trim(),region:f.region.trim(),description:taggedDescription(f.description.trim(),f.media_format),image_url:f.image_url.trim()||null,tracklist:f.tracklist_editor.split(/\r?\n/).map(s=>s.trim()).filter(Boolean)};if(payload.tracklist.length>300){$('editStatus').textContent='Track listing exceeds 300 lines.';return}try{
  const id=editingId;
@@ -267,7 +394,7 @@ $('offerForm').onsubmit=async e=>{e.preventDefault();if(!chosen)return;const f=O
      listings.find(row=>row.id===id)||salesRows.find(row=>row.listing_id===id);
  }
  let ownedListings=[];
- async function refreshDashboard(){if(!config?.uid){offerRows=[];offerListings.clear();ownedListings=[];salesRows=[];reviewRows=[];renderDashboard();return}const session=config;try{
+ async function refreshDashboard(){if(!config?.uid){offerRows=[];offerListings.clear();ownedListings=[];salesRows=[];reviewRows=[];renderDashboard();return}const session=config;checkModerator(session);try{
    const [offers,mine,sales,reviews]=await Promise.all([api('marketplace_offers','GET',null,'?select=id,listing_id,buyer_id,offer_type,offer_amount,currency,message,status,created_at,counter_amount,counter_currency,is_purchase_request,shipping_terms&order=created_at.desc&limit=200'),api('marketplace_listings','GET',null,'?select=id,seller_id,artist,album,asking_price,currency,image_url,status,listing_type,condition,pressing,region,description,tracklist,photo_paths,allow_offers&seller_id=eq.'+encodeURIComponent(config.uid)+'&limit=200'),api('marketplace_sales','GET',null,'?select=id,listing_id,offer_id,seller_id,buyer_id,artist,album,image_url,agreed_amount,currency,completed_at&order=completed_at.desc&limit=200'),api('marketplace_reviews','GET',null,'?select=id,sale_id,seller_id,rating,review_text,created_at&order=created_at.desc&limit=1000')]);
    if(config!==session)return;
    const ids=(offers||[]).map(offer=>offer.id);
