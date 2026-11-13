@@ -423,10 +423,15 @@ function buyerActions(listing) {
  const request=canRequestPurchase(listing)?
    '<button type="button" data-request-buy="'+id+'">Request to Buy · '+
      esc(money(listing.asking_price,listing.currency))+'</button>':'';
- const offer=listing.allow_offers!==false||listing.listing_type!=='sale'?
-   '<button data-offer="'+id+'">'+(listing.allow_offers===false&&listing.listing_type==='both'?
-     'Offer a trade':'Make an offer')+'</button>':'';
+ const canBuy=canMakeOffer(listing,'buy');
+ const canTrade=canMakeOffer(listing,'trade');
+ const offer=canBuy||canTrade?
+   '<button data-offer="'+id+'">'+(canBuy?'Make an offer':'Offer a trade')+'</button>':'';
  return request+offer;
+}
+function canMakeOffer(listing,type) {
+ if(type==='buy')return listing.allow_offers!==false&&['sale','both'].includes(listing.listing_type);
+ return type==='trade'&&['trade','both'].includes(listing.listing_type);
 }
 function canRequestPurchase(listing) {
  return ['sale','both'].includes(listing.listing_type)&&Number(listing.asking_price)>0;
@@ -467,15 +472,16 @@ $('editListingForm').onsubmit=async e=>{e.preventDefault();if(!editingId)return;
  $('editDialog').close();editingId=null;await load()}catch(err){$('editStatus').textContent='Could not save: '+err.message}};
 $('closeDetails').onclick=()=>$('detailsDialog').close();$('cancelEdit').onclick=()=>$('editDialog').close();
 $('listings').onclick=async e=>{const request=e.target.closest('[data-request-buy]');if(request){await requestPurchase(request);return;}const offer=e.target.closest('[data-offer]'),close=e.target.closest('[data-close]'),details=e.target.closest('[data-details]'),edit=e.target.closest('[data-edit]');if(details){const r=listings.find(x=>x.id===details.dataset.details);if(r)openDetails(r)}if(edit){const r=listings.find(x=>x.id===edit.dataset.edit);if(r)openEdit(r)}if(offer){if(!config?.uid){alert('Sign in to make an offer. Open My Account to sign in.');document.querySelector('[data-nav-view="account"]')?.click();return;}chosen=listings.find(r=>r.id===offer.dataset.offer);if(!chosen)return;if(chosen.seller_id===config?.uid){alert('You cannot offer on your own listing.');return}const existing=offerRows.find(o=>o.listing_id===chosen.id&&o.buyer_id===config?.uid&&['pending','countered','accepted'].includes(o.status));if(existing){alert(existing.status==='countered'?'Seller responded. Open Offers I’ve sent to answer or revise your counteroffer.':'You already have an '+existing.status+' offer for this listing. Check Offers I’ve sent.');return}$('offerTitle').textContent=chosen.artist+' — '+chosen.album;$('offerStatus').textContent='';const type=$('offerForm').elements.offer_type;
-for(const option of type.options)if(option.value==='buy')option.disabled=chosen.allow_offers===false||chosen.listing_type==='trade';
-if(type.selectedOptions[0]?.disabled)type.value='trade';
+for(const option of type.options)option.disabled=!canMakeOffer(chosen,option.value);
+type.value=[...type.options].find(option=>!option.disabled)?.value||'';
+if(!type.value)return;
 type.dispatchEvent(new Event('change'));
 $('offerDialog').showModal()}if(close&&confirm('Withdraw this public listing?')){try{await api('marketplace_listings','PATCH',{status:'withdrawn'},'?id=eq.'+encodeURIComponent(close.dataset.close));await load()}catch(err){alert(err.message)}}};
 $('listingForm').onsubmit=async e=>{e.preventDefault();if(!config?.uid)return alert('Connect your account first');const f=Object.fromEntries(new FormData(e.target).entries());if(!confirm('Publish '+f.artist+' — '+f.album+' to the PUBLIC marketplace? The listing details and item photos will be public.'))return;const payload={seller_id:config.uid,artist:f.artist.trim(),album:f.album.trim(),listing_type:f.listing_type,allow_offers:f.allow_offers==='on',asking_price:Number(f.asking_price),currency:f.currency,condition:f.condition.trim(),pressing:f.pressing.trim(),region:f.region.trim(),description:taggedDescription(f.description.trim(),f.media_format),image_url:f.image_url.trim()||null,tracklist:f.tracklist_editor.trim()?f.tracklist_editor.split(/\r?\n/).map(s=>s.trim()).filter(Boolean):[],release_mbid:selectedReleaseId};try{
  await photos.save(e.currentTarget,newPhotos,config,payload.listing_type,true,
    paths=>api('marketplace_listings','POST',{...payload,photo_paths:paths}));
  $('publishStatus').textContent='Published successfully.';e.target.reset();selectedReleaseId=null;$('coverPreview').textContent='';await load()}catch(err){$('publishStatus').textContent='Not published: '+err.message}};
-$('offerForm').onsubmit=async e=>{e.preventDefault();if(!chosen)return;const f=Object.fromEntries(new FormData(e.target).entries());if(offerRows.some(o=>o.listing_id===chosen.id&&o.buyer_id===config?.uid&&['pending','countered','accepted'].includes(o.status))){$('offerStatus').textContent='You already have an active offer for this listing. Check Offers I’ve sent.';return;}if(f.offer_type==='buy'&&(!f.offer_amount||Number(f.offer_amount)<=0)){ $('offerStatus').textContent='Enter a dollar amount for a purchase offer.';return;}try{await api('marketplace_offers','POST',{listing_id:chosen.id,buyer_id:config.uid,offer_type:f.offer_type,offer_amount:f.offer_amount?Number(f.offer_amount):null,currency:f.currency,message:(f.message||'').trim()});$('offerDialog').close();await refreshDashboard();alert('Offer sent. You can track it under Offers I’ve sent.')}catch(err){$('offerStatus').textContent='Offer not sent: '+err.message}};
+$('offerForm').onsubmit=async e=>{e.preventDefault();if(!chosen)return;const f=Object.fromEntries(new FormData(e.target).entries());if(!canMakeOffer(chosen,f.offer_type)){$('offerStatus').textContent='This listing does not accept that offer type.';return;}if(offerRows.some(o=>o.listing_id===chosen.id&&o.buyer_id===config?.uid&&['pending','countered','accepted'].includes(o.status))){$('offerStatus').textContent='You already have an active offer for this listing. Check Offers I’ve sent.';return;}if(f.offer_type==='buy'&&(!f.offer_amount||Number(f.offer_amount)<=0)){ $('offerStatus').textContent='Enter a dollar amount for a purchase offer.';return;}try{await api('marketplace_offers','POST',{listing_id:chosen.id,buyer_id:config.uid,offer_type:f.offer_type,offer_amount:f.offer_amount?Number(f.offer_amount):null,currency:f.currency,message:(f.message||'').trim()});$('offerDialog').close();await refreshDashboard();alert('Offer sent. You can track it under Offers I’ve sent.')}catch(err){$('offerStatus').textContent='Offer not sent: '+err.message}};
 
  function money(amount,currency){if(amount===null||amount===undefined||amount==='')return 'Trade / no amount';try{return new Intl.NumberFormat('en-CA',{style:'currency',currency:currency||'CAD'}).format(Number(amount))+' '+(currency||'CAD')}catch{return esc(amount)+' '+esc(currency||'')}}
  let offerListings=new Map();
