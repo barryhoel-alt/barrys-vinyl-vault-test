@@ -249,9 +249,9 @@ moderationButton.hidden=true;
 $('dashboardPanel').before(moderationButton);
 const moderationDialog=document.createElement('dialog');
 moderationDialog.setAttribute('aria-label','Moderation queue');
-moderationDialog.innerHTML='<h2>Moderation queue</h2><p role="status"></p><div></div><button type="button">Close</button>';
+moderationDialog.innerHTML='<h2>Moderation queue</h2><button type="button" data-open-reports>Open reports</button> <button type="button" data-hidden-listings>Hidden listings</button><p role="status"></p><div></div><button type="button" data-close-moderation>Close</button>';
 document.body.append(moderationDialog);
-moderationDialog.querySelector('button').onclick=()=>moderationDialog.close();
+moderationDialog.querySelector('[data-close-moderation]').onclick=()=>moderationDialog.close();
 const moderationStatus=moderationDialog.querySelector('[role=status]');
 const moderationRows=moderationDialog.querySelector('div');
 let moderationSession=null;
@@ -275,14 +275,18 @@ function resetModeration(){
  if(moderationDialog.open)moderationDialog.close();
 }
 
-async function loadModeration(){
+let moderationRequest=0;
+async function loadModeration(hidden=false){
+ const request=++moderationRequest;
  const session=config;
+ moderationDialog.querySelector('[data-open-reports]').disabled=!hidden;
+ moderationDialog.querySelector('[data-hidden-listings]').disabled=hidden;
  moderationRows.replaceChildren();
- moderationStatus.textContent='Loading reports…';
+ moderationStatus.textContent=hidden?'Loading hidden listings…':'Loading reports…';
  try{
-  const rows=await api('rpc/marketplace_report_queue','POST',{});
-  if(config!==session||!moderationDialog.open)return;
-  moderationStatus.textContent=rows.length?'':'No open reports.';
+  const rows=await api(hidden?'rpc/marketplace_hidden_listings':'rpc/marketplace_report_queue','POST',{});
+  if(config!==session||request!==moderationRequest||!moderationDialog.open)return;
+  moderationStatus.textContent=rows.length?'':hidden?'No hidden listings.':'No open reports.';
   for(const report of rows){
    const card=document.createElement('article');
    card.className='offer-card';
@@ -293,21 +297,23 @@ async function loadModeration(){
    const note=document.createElement('p');
    note.textContent=report.note;
    const date=document.createElement('small');
-   date.textContent=new Date(report.created_at).toLocaleString();
+   date.textContent=new Date(hidden?report.hidden_at:report.created_at).toLocaleString();
    const actions=document.createElement('div');
    actions.className='row';
-   card.append(heading,reason,note,date,actions);
-   for(const [action,label] of [['dismissed','Dismiss report'],['hidden','Hide listing']]){
+   card.append(heading,...(hidden?[]:[reason,note]),date,actions);
+   for(const [action,label] of (hidden?[['restore','Restore listing']]:[['dismissed','Dismiss report'],['hidden','Hide listing']])){
     const button=document.createElement('button');
     button.type='button';
     button.textContent=label;
     button.onclick=async ()=>{
-     if(!confirm(action==='hidden'?'Hide this listing from Browse?':'Dismiss this report?'))return;
+     if(!confirm(hidden?'Restore this listing to Browse?':action==='hidden'?'Hide this listing from Browse?':'Dismiss this report?'))return;
      for(const control of actions.children)control.disabled=true;
      try{
-      await api('rpc/marketplace_resolve_report','POST',{p_report_id:report.id,p_action:action});
-      await loadModeration();
-      if(action==='hidden')await load();
+      if(hidden)await api('rpc/marketplace_restore_listing','POST',{p_listing_id:report.id});
+      else await api('rpc/marketplace_resolve_report','POST',{p_report_id:report.id,p_action:action});
+      if(config!==session)return;
+      if(request===moderationRequest&&moderationDialog.open)await loadModeration(hidden);
+      if(hidden||action==='hidden')await load();
      }catch(error){
       moderationStatus.textContent='Could not resolve report: '+error.message;
       for(const control of actions.children)control.disabled=false;
@@ -318,9 +324,11 @@ async function loadModeration(){
    moderationRows.append(card);
   }
  }catch(error){
-  if(config===session)moderationStatus.textContent='Could not load reports: '+error.message;
+  if(config===session&&request===moderationRequest)moderationStatus.textContent='Could not load moderation queue: '+error.message;
  }
 }
+moderationDialog.querySelector('[data-open-reports]').onclick=()=>loadModeration();
+moderationDialog.querySelector('[data-hidden-listings]').onclick=()=>loadModeration(true);
 moderationButton.onclick=()=>{moderationDialog.showModal();loadModeration();};
 
 function buyerActions(listing) {
