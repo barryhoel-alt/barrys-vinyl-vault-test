@@ -156,11 +156,33 @@ function listingPhotoUrls(listing) {
  return (Array.isArray(listing.photo_paths) ? listing.photo_paths : [])
    .map(path => photos.photoUrl(photoProject(), path)).filter(Boolean);
 }
-function photoGallery(urls) {
- return urls.map((url, index) =>
-   '<a href="'+esc(url)+'" target="_blank" rel="noopener noreferrer" aria-label="Open full-size item photo '+(index+1)+'">'+
-   '<img src="'+esc(url)+'" alt="Item photo '+(index+1)+'" style="width:150px;height:150px;object-fit:contain"></a>'
- ).join(' ');
+function showSellerPhotos(container, urls) {
+ if (!urls.length) return;
+ const gallery=document.createElement('section');
+ gallery.setAttribute('aria-label','Seller photos');
+ gallery.innerHTML='<h3>Seller photos</h3><a target="_blank" rel="noopener noreferrer">'+
+   '<img style="display:block;width:min(100%,360px);height:260px;object-fit:contain"></a>'+
+   '<div class="row" style="margin-top:8px"><button type="button" aria-label="Previous seller photo">←</button>'+
+   '<span aria-live="polite"></span><button type="button" aria-label="Next seller photo">→</button></div>';
+ const link=gallery.querySelector('a');
+ const image=gallery.querySelector('img');
+ const count=gallery.querySelector('span');
+ const [previous,next]=gallery.querySelectorAll('button');
+ let index=0;
+ function displayPhoto() {
+   link.href=urls[index];
+   link.setAttribute('aria-label','Open seller photo '+(index+1)+' at full size');
+   image.src=urls[index];
+   image.alt='Seller photo '+(index+1);
+   count.textContent=(index+1)+' of '+urls.length;
+   previous.disabled=index===0;
+   next.disabled=index===urls.length-1;
+ }
+ previous.onclick=()=>{if(index>0){index--;displayPhoto();}};
+ next.onclick=()=>{if(index<urls.length-1){index++;displayPhoto();}};
+ previous.hidden=next.hidden=urls.length===1;
+ displayPhoto();
+ container.replaceWith(gallery);
 }
 function buyerActions(listing) {
  const active=offerRows.find(row=>row.listing_id===listing.id&&row.buyer_id===config?.uid&&
@@ -202,9 +224,9 @@ async function requestPurchase(button) {
    button.disabled=false;
  }
 }
-function render(){const filtered=listings;$('listingStatus').textContent=browseTotal+' matching public listing(s) · showing '+(filtered.length?browsePage*PAGE_SIZE+1:0)+'–'+(browsePage*PAGE_SIZE+filtered.length);updateBrowseControls();$('listings').innerHTML=filtered.map(r=>{const itemPhoto=listingPhotoUrls(r)[0];const coverUrl=itemPhoto||r.image_url;const cover='<div class="cover-frame">'+(coverUrl&&/^https:\/\//i.test(coverUrl)?'<img alt="'+(itemPhoto?'Item photo for ':'Album cover for ')+esc(r.artist+' — '+r.album)+'" loading="lazy" src="'+esc(coverUrl)+'" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><div class="cover-placeholder" hidden><div class="mini-record"></div><span>Artwork unavailable</span></div>':'<div class="cover-placeholder"><div class="mini-record"></div><span>Cover not added yet</span></div>')+'</div>';return '<article class="listing">'+cover+'<h3>'+esc(r.artist)+' — '+esc(r.album)+'</h3><span class="format-tag">'+esc(itemFormat(r))+'</span>'+sellerRating(r.seller_id)+'<p class="price">'+esc(price(r))+'</p><p>'+esc(r.listing_type)+' · '+esc(r.condition||'Condition not specified')+'</p><small>'+esc(r.pressing||'')+' · '+esc(r.region||'')+'</small><div class="listing-actions"><button data-details="'+esc(r.id)+'">View Album Details</button>'+((config?.uid&&config.uid===r.seller_id)?'<button data-edit="'+esc(r.id)+'">Edit / add photos</button><button data-close="'+esc(r.id)+'">Withdraw</button>':buyerActions(r))+'</div></article>'}).join('')||'<p class="muted">No matching listings yet.</p>'}
+function render(){const filtered=listings;$('listingStatus').textContent=browseTotal+' matching public listing(s) · showing '+(filtered.length?browsePage*PAGE_SIZE+1:0)+'–'+(browsePage*PAGE_SIZE+filtered.length);updateBrowseControls();$('listings').innerHTML=filtered.map(r=>{const coverUrl=r.image_url;const cover='<div class="cover-frame">'+(coverUrl&&/^https:\/\//i.test(coverUrl)?'<img alt="Album cover for '+esc(r.artist+' — '+r.album)+'" loading="lazy" src="'+esc(coverUrl)+'" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><div class="cover-placeholder" hidden><div class="mini-record"></div><span>Artwork unavailable</span></div>':'<div class="cover-placeholder"><div class="mini-record"></div><span>Cover not added yet</span></div>')+'</div>';return '<article class="listing">'+cover+'<h3>'+esc(r.artist)+' — '+esc(r.album)+'</h3><span class="format-tag">'+esc(itemFormat(r))+'</span>'+sellerRating(r.seller_id)+'<p class="price">'+esc(price(r))+'</p><p>'+esc(r.listing_type)+' · '+esc(r.condition||'Condition not specified')+'</p><small>'+esc(r.pressing||'')+' · '+esc(r.region||'')+'</small><div class="listing-actions"><button data-details="'+esc(r.id)+'">'+ (listingPhotoUrls(r).length?'View details &amp; photos':'View Album Details')+'</button>'+((config?.uid&&config.uid===r.seller_id)?'<button data-edit="'+esc(r.id)+'">Edit / add photos</button><button data-close="'+esc(r.id)+'">Withdraw</button>':buyerActions(r))+'</div></article>'}).join('')||'<p class="muted">No matching listings yet.</p>'}
 let editingId=null;
-function openDetails(r){const lines=tracks(r);const urls=listingPhotoUrls(r);$('detailsContent').innerHTML='<h2>'+esc(r.artist)+' — '+esc(r.album)+'</h2>'+(urls.length?photoGallery(urls):r.image_url?'<img alt="Album cover" style="max-width:260px;width:100%;object-fit:contain" src="'+esc(r.image_url)+'" onerror="this.remove()">':'')+'<p class="price">'+esc(price(r))+'</p><p><b>Condition:</b> '+esc(r.condition||'Not specified')+'</p><p><b>Pressing:</b> '+esc(r.pressing||'Not specified')+'</p><p><b>Region:</b> '+esc(r.region||'Not specified')+'</p><p><b>Listing type:</b> '+esc(r.listing_type)+'</p><p>'+esc(cleanDescription(r.description))+'</p><h3>Track listing</h3>'+(lines.length?'<div style="white-space:pre-line">'+lines.map(esc).join('\n')+'</div>':'<p class="muted">No tracks supplied.</p>');$('detailsDialog').showModal()}
+function openDetails(r){const lines=tracks(r);const urls=listingPhotoUrls(r);$('detailsContent').innerHTML='<h2>'+esc(r.artist)+' — '+esc(r.album)+'</h2>'+(r.image_url&&/^https:\/\//i.test(r.image_url)?'<img alt="Album cover" style="max-width:260px;width:100%;object-fit:contain" src="'+esc(r.image_url)+'" onerror="this.remove()">':'')+(urls.length?'<div data-seller-photos></div>':'')+'<p class="price">'+esc(price(r))+'</p><p><b>Condition:</b> '+esc(r.condition||'Not specified')+'</p><p><b>Pressing:</b> '+esc(r.pressing||'Not specified')+'</p><p><b>Region:</b> '+esc(r.region||'Not specified')+'</p><p><b>Listing type:</b> '+esc(r.listing_type)+'</p><p>'+esc(cleanDescription(r.description))+'</p><h3>Track listing</h3>'+(lines.length?'<div style="white-space:pre-line">'+lines.map(esc).join('\n')+'</div>':'<p class="muted">No tracks supplied.</p>');if(urls.length)showSellerPhotos($('detailsContent').querySelector('[data-seller-photos]'),urls);$('detailsDialog').showModal()}
 function openEdit(r){if(r.seller_id!==config?.uid)return;editingId=r.id;editPhotos.reset(r.photo_paths||[],photoProject());const f=$('editListingForm');f.elements.allow_offers.checked=r.allow_offers!==false;f.elements.media_format.value=itemFormat(r);for(const name of ['artist','album','listing_type','asking_price','currency','condition','pressing','region','description','image_url'])f.elements[name].value=name==='description'?cleanDescription(r[name]):(r[name]??'');f.elements.tracklist_editor.value=tracks(r).join('\n');$('editStatus').textContent='';$('editDialog').showModal()}
 $('editListingForm').onsubmit=async e=>{e.preventDefault();if(!editingId)return;const f=Object.fromEntries(new FormData(e.currentTarget).entries());const payload={artist:f.artist.trim(),album:f.album.trim(),listing_type:f.listing_type,allow_offers:f.allow_offers==='on',asking_price:Number(f.asking_price),currency:f.currency,condition:f.condition.trim(),pressing:f.pressing.trim(),region:f.region.trim(),description:taggedDescription(f.description.trim(),f.media_format),image_url:f.image_url.trim()||null,tracklist:f.tracklist_editor.split(/\r?\n/).map(s=>s.trim()).filter(Boolean)};if(payload.tracklist.length>300){$('editStatus').textContent='Track listing exceeds 300 lines.';return}try{
  const id=editingId;
