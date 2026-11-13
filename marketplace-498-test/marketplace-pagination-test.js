@@ -110,11 +110,18 @@ function browseQuery(signedIn){
  }
  const type=$('type').value;
  if(type==='sale'||type==='trade')q.set('listing_type','in.('+type+',both)');
+ if(type==='both')q.set('listing_type','eq.both');
  const fmt=$('formatFilter').value;
  // Media format is stored as a [Format: ...] prefix in description, not a separate column.
- if(fmt && fmt!=='Vinyl'){q.set('description','like.'+'[Format: '+fmt+']*')}
+ if(fmt==='Vinyl'){
+  const otherFormats=['CD','Cassette','DVD / Blu-ray','Memorabilia'];
+  const exclusions=otherFormats.map(format=>'description.not.like.[Format: '+format+']*');
+  q.set('and','(or(description.is.null,and('+exclusions.join(',')+')))');
+ }else if(fmt){
+  q.set('description','like.[Format: '+fmt+']*');
+ }
  const order={newest:'created_at.desc',oldest:'created_at.asc',artist:'artist.asc,album.asc',price_low:'asking_price.asc.nullslast',price_high:'asking_price.desc.nullslast'}[$('vvBrowseSort')?.value]||'created_at.desc';
- q.set('order',order);q.set('limit',String(PAGE_SIZE));q.set('offset',String(browsePage*PAGE_SIZE));
+ q.set('order',order+',id.asc');q.set('limit',String(PAGE_SIZE));q.set('offset',String(browsePage*PAGE_SIZE));
  return '?'+q.toString();
 }
 async function load(){
