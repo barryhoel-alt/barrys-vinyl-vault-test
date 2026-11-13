@@ -32,7 +32,7 @@ const saved=readJson(localStorage,SETTINGS)||{};
    loginForm.elements.password.value='';msg.textContent='Signed in successfully.';hideLogin();status('Marketplace Test: signed in as '+config.email);await load();
   }catch(err){msg.textContent='Sign-in failed: '+err.message}
  };
- $('marketplaceLogout').onclick=()=>{if(window.vv498Clear)window.vv498Clear();config=null;sessionStorage.removeItem(AUTH);resetModeration();listings=[];offerRows=[];offerListings.clear();ownedListings=[];render();renderDashboard();status('Signed out of Marketplace Test.');showLogin();load()};
+ $('marketplaceLogout').onclick=()=>{if(window.vv498Clear)window.vv498Clear();config=null;sessionStorage.removeItem(AUTH);resetModeration();blockedAccountsButton.hidden=true;if(blockedAccountsDialog.open)blockedAccountsDialog.close();blockedAccountsDialog.querySelector('ul').replaceChildren();listings=[];offerRows=[];offerListings.clear();ownedListings=[];render();renderDashboard();status('Signed out of Marketplace Test.');showLogin();load()};
 }
 async function connect(){
  const saved=readJson(localStorage,SETTINGS),session=readJson(sessionStorage,AUTH);
@@ -331,6 +331,68 @@ moderationDialog.querySelector('[data-open-reports]').onclick=()=>loadModeration
 moderationDialog.querySelector('[data-hidden-listings]').onclick=()=>loadModeration(true);
 moderationButton.onclick=()=>{moderationDialog.showModal();loadModeration();};
 
+const blockedAccountsButton=document.createElement('button');
+blockedAccountsButton.type='button';
+blockedAccountsButton.textContent='Blocked accounts';
+blockedAccountsButton.hidden=true;
+$('connect').after(blockedAccountsButton);
+const blockedAccountsDialog=document.createElement('dialog');
+blockedAccountsDialog.setAttribute('aria-label','Blocked accounts');
+blockedAccountsDialog.innerHTML='<h2>Blocked accounts</h2><p role="status"></p><ul></ul><button type="button">Close</button>';
+document.body.append(blockedAccountsDialog);
+blockedAccountsDialog.querySelector('button').onclick=()=>blockedAccountsDialog.close();
+
+async function loadBlockedAccounts(){
+ const session=config;
+ const status=blockedAccountsDialog.querySelector('[role=status]');
+ const list=blockedAccountsDialog.querySelector('ul');
+ list.replaceChildren();
+ status.textContent='Loading blocked accounts…';
+ try{
+  const rows=await api('rpc/marketplace_my_blocked_accounts','POST',{});
+  if(config!==session||!blockedAccountsDialog.open)return;
+  status.textContent=rows.length?'':'No blocked accounts.';
+  for(const row of rows){
+   const item=document.createElement('li');
+   const label=document.createElement('span');
+   label.textContent='Account '+row.blocked_id.slice(0,8)+' · Blocked '+new Date(row.created_at).toLocaleString()+' ';
+   const button=document.createElement('button');
+   button.type='button';
+   button.textContent='Unblock';
+   button.setAttribute('aria-label','Unblock account '+row.blocked_id.slice(0,8));
+   button.onclick=async ()=>{
+    button.disabled=true;
+    try{
+     await api('rpc/marketplace_unblock_account','POST',{p_blocked_id:row.blocked_id});
+     if(config===session&&blockedAccountsDialog.open)await loadBlockedAccounts();
+    }catch(error){
+     if(config===session)status.textContent='Could not unblock account: '+error.message;
+     button.disabled=false;
+    }
+   };
+   item.append(label,button);
+   list.append(item);
+  }
+ }catch(error){
+  if(config===session)status.textContent='Could not load blocked accounts: '+error.message;
+ }
+}
+blockedAccountsButton.onclick=()=>{blockedAccountsDialog.showModal();loadBlockedAccounts();};
+
+async function blockOfferAccount(button){
+ const offerId=button.dataset.blockOffer;
+ if(!config?.uid||!offerRows.some(offer=>offer.id===offerId))return;
+ if(!confirm('Block the other account on this offer? Neither account can send new offers or purchase requests to the other.'))return;
+ button.disabled=true;
+ try{
+  await api('rpc/marketplace_block_offer_account','POST',{p_offer_id:offerId});
+  button.textContent='Account blocked';
+ }catch(error){
+  alert('Could not block account: '+error.message);
+  button.disabled=false;
+ }
+}
+
 function buyerActions(listing) {
  const active=offerRows.find(row=>row.listing_id===listing.id&&row.buyer_id===config?.uid&&
    ['pending','countered','accepted'].includes(row.status));
@@ -402,7 +464,7 @@ $('offerForm').onsubmit=async e=>{e.preventDefault();if(!chosen)return;const f=O
      listings.find(row=>row.id===id)||salesRows.find(row=>row.listing_id===id);
  }
  let ownedListings=[];
- async function refreshDashboard(){if(!config?.uid){offerRows=[];offerListings.clear();ownedListings=[];salesRows=[];reviewRows=[];renderDashboard();return}const session=config;checkModerator(session);try{
+ async function refreshDashboard(){if(!config?.uid){offerRows=[];offerListings.clear();ownedListings=[];salesRows=[];reviewRows=[];renderDashboard();return}const session=config;blockedAccountsButton.hidden=false;checkModerator(session);try{
    const [offers,mine,sales,reviews]=await Promise.all([api('marketplace_offers','GET',null,'?select=id,listing_id,buyer_id,offer_type,offer_amount,currency,message,status,created_at,counter_amount,counter_currency,is_purchase_request,shipping_terms&order=created_at.desc&limit=200'),api('marketplace_listings','GET',null,'?select=id,seller_id,artist,album,asking_price,currency,image_url,status,listing_type,condition,pressing,region,description,tracklist,photo_paths,allow_offers&seller_id=eq.'+encodeURIComponent(config.uid)+'&limit=200'),api('marketplace_sales','GET',null,'?select=id,listing_id,offer_id,seller_id,buyer_id,artist,album,image_url,agreed_amount,currency,completed_at&order=completed_at.desc&limit=200'),api('marketplace_reviews','GET',null,'?select=id,sale_id,seller_id,rating,review_text,created_at&order=created_at.desc&limit=1000')]);
    if(config!==session)return;
    const ids=(offers||[]).map(offer=>offer.id);
@@ -418,10 +480,12 @@ $('offerForm').onsubmit=async e=>{e.preventDefault();if(!chosen)return;const f=O
   const panel=$('dashboardPanel');if(!config?.uid){panel.innerHTML='<p class="muted">Sign in to see offers and listings.</p>';return}
   if(dashboardTab==='sales'){panel.innerHTML='<h3>Completed sales & purchases</h3><p class="muted">Records marked sold by sellers. This is a marketplace record, not proof of payment or shipment.</p>'+(salesRows.map(s=>'<article class="offer-card sale-history-card"><div class="sale-cover">'+(s.image_url&&/^https:\/\//i.test(s.image_url)?'<img src="'+esc(s.image_url)+'" alt="Cover artwork for '+esc(s.artist+' — '+s.album)+'" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="sale-cover-empty" hidden>♫<small>Artwork unavailable</small></span>':'<span class="sale-cover-empty">♫<small>No artwork saved</small></span>')+'</div><div class="sale-info"><h3>'+esc(s.artist)+' — '+esc(s.album)+'</h3><span class="pill">'+(s.seller_id===config.uid?'Sold':'Purchased')+'</span><p class="offer-amount">'+esc(s.agreed_amount==null?'Trade agreement':money(s.agreed_amount,s.currency))+'</p><small>Marked sold: '+esc(new Date(s.completed_at).toLocaleString())+'</small>'+(reviewRows.find(r=>r.sale_id===s.id)?'<div class="review-item"><div class="review-stars">'+'★'.repeat(Number(reviewRows.find(r=>r.sale_id===s.id).rating))+'☆'.repeat(5-Number(reviewRows.find(r=>r.sale_id===s.id).rating))+'</div><p>'+esc(reviewRows.find(r=>r.sale_id===s.id).review_text||'No written review')+'</p><small>Verified buyer review</small></div>':(s.buyer_id===config.uid?'<p><button data-review-sale="'+esc(s.id)+'">Leave seller review</button></p>':'<p class="muted">No buyer review yet.</p>'))+'</div></article>').join('')||'<p class="muted">No completed transactions yet.</p>');return}
   if(dashboardTab==='listings'){panel.innerHTML='<h3>My active listings</h3>'+ownedListings.filter(x=>x.status==='active').map(x=>'<div class="offer-card"><b>'+esc(x.artist)+' — '+esc(x.album)+'</b><p>'+esc(money(x.asking_price,x.currency))+'</p><button type="button" data-edit-owned="'+esc(x.id)+'">Edit / add photos</button></div>').join('')||'<p>No active listings.</p>';return}
-  const arr=dashboardTab==='sent'?sent:incoming;panel.innerHTML='<h3>'+(dashboardTab==='sent'?'Offers I sent':'Offers received')+'</h3>'+(arr.map(r=>{const l=offerListing(r),isSeller=mineIds.has(r.listing_id),canAct=isSeller&&r.status==='pending',canBuyerAct=dashboardTab==='sent'&&r.buyer_id===config?.uid&&r.status==='countered';return '<article class="offer-card">'+(l?.image_url&&/^https:\/\//i.test(l.image_url)?'<img src="'+esc(l.image_url)+'" alt="Album cover" loading="lazy" onerror="this.remove()">':'')+'<h3>'+esc(l?l.artist+' — '+l.album:'Listing '+r.listing_id.slice(0,8))+'</h3><span class="pill">'+esc(r.status||'pending')+'</span><p class="muted">'+esc(r.is_purchase_request?'Purchase request':r.offer_type==='trade'?'Trade offer':'Purchase offer')+'</p><div class="offer-amount">'+esc(money(r.offer_amount,r.currency))+'</div>'+(l?.asking_price!=null?'<p class="muted">Asking price: '+esc(money(l.asking_price,l.currency))+'</p>':'')+(r.counter_amount!=null?'<p><b>Seller counteroffer: '+esc(money(r.counter_amount,r.counter_currency||r.currency))+'</b></p>':'')+(r.shipping_terms?'<p><b>Shipping / pickup:</b> '+esc(r.shipping_terms)+'</p>':'')+'<p>'+esc(r.message||'No message')+'</p><small>'+esc(new Date(r.created_at).toLocaleString())+'</small>'+(canAct?'<div class="row"><button data-respond="accepted" data-id="'+esc(r.id)+'">Accept</button>'+(r.is_purchase_request?'':'<button data-counter="'+esc(r.id)+'">Counteroffer</button>')+'<button data-respond="declined" data-id="'+esc(r.id)+'">Decline</button></div>':'')+(isSeller&&r.status==='accepted'&&!salesRows.some(s=>s.listing_id===r.listing_id)?'<div class="row"><button data-mark-sold="'+esc(r.id)+'">Mark record sold</button></div>':'')+(canBuyerAct?'<div class="row"><button data-buyer-action="accept" data-id="'+esc(r.id)+'">Accept counteroffer</button><button data-buyer-revise="'+esc(r.id)+'">Make another offer</button><button data-buyer-action="decline" data-id="'+esc(r.id)+'">Decline</button></div>':'')+'</article>'}).join('')||'<p class="muted">No offers here yet.</p>');
+  const arr=dashboardTab==='sent'?sent:incoming;panel.innerHTML='<h3>'+(dashboardTab==='sent'?'Offers I sent':'Offers received')+'</h3>'+(arr.map(r=>{const l=offerListing(r),isSeller=mineIds.has(r.listing_id),canAct=isSeller&&r.status==='pending',canBuyerAct=dashboardTab==='sent'&&r.buyer_id===config?.uid&&r.status==='countered';return '<article class="offer-card">'+(l?.image_url&&/^https:\/\//i.test(l.image_url)?'<img src="'+esc(l.image_url)+'" alt="Album cover" loading="lazy" onerror="this.remove()">':'')+'<h3>'+esc(l?l.artist+' — '+l.album:'Listing '+r.listing_id.slice(0,8))+'</h3><span class="pill">'+esc(r.status||'pending')+'</span><p class="muted">'+esc(r.is_purchase_request?'Purchase request':r.offer_type==='trade'?'Trade offer':'Purchase offer')+'</p><div class="offer-amount">'+esc(money(r.offer_amount,r.currency))+'</div>'+(l?.asking_price!=null?'<p class="muted">Asking price: '+esc(money(l.asking_price,l.currency))+'</p>':'')+(r.counter_amount!=null?'<p><b>Seller counteroffer: '+esc(money(r.counter_amount,r.counter_currency||r.currency))+'</b></p>':'')+(r.shipping_terms?'<p><b>Shipping / pickup:</b> '+esc(r.shipping_terms)+'</p>':'')+'<p>'+esc(r.message||'No message')+'</p><small>'+esc(new Date(r.created_at).toLocaleString())+'</small>'+(canAct?'<div class="row"><button data-respond="accepted" data-id="'+esc(r.id)+'">Accept</button>'+(r.is_purchase_request?'':'<button data-counter="'+esc(r.id)+'">Counteroffer</button>')+'<button data-respond="declined" data-id="'+esc(r.id)+'">Decline</button></div>':'')+(isSeller&&r.status==='accepted'&&!salesRows.some(s=>s.listing_id===r.listing_id)?'<div class="row"><button data-mark-sold="'+esc(r.id)+'">Mark record sold</button></div>':'')+(canBuyerAct?'<div class="row"><button data-buyer-action="accept" data-id="'+esc(r.id)+'">Accept counteroffer</button><button data-buyer-revise="'+esc(r.id)+'">Make another offer</button><button data-buyer-action="decline" data-id="'+esc(r.id)+'">Decline</button></div>':'')+'<p><button type="button" data-block-offer="'+esc(r.id)+'">Block this account</button></p></article>'}).join('')||'<p class="muted">No offers here yet.</p>');
  }
  $('dashIncoming').onclick=()=>{dashboardTab='incoming';renderDashboard()};$('dashSent').onclick=()=>{dashboardTab='sent';renderDashboard()};$('dashListings').onclick=()=>{dashboardTab='listings';renderDashboard()};$('dashSales').onclick=()=>{dashboardTab='sales';renderDashboard()};
  $('dashboardPanel').onclick=async e=>{
+   const blockButton=e.target.closest('[data-block-offer]');
+   if(blockButton){await blockOfferAccount(blockButton);return;}
    const editButton=e.target.closest('[data-edit-owned]');
    if(editButton){
      const listing=ownedListings.find(row=>row.id===editButton.dataset.editOwned);
