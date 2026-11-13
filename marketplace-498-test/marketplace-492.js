@@ -21,7 +21,6 @@ document.addEventListener('click',e=>{
  // Cloned home cards delegate to the original listings handler by clicking the corresponding original action.
   const action=e.target.closest('#homeListings [data-details],#homeListings [data-edit],#homeListings [data-offer],#homeListings [data-close],#homeListings [data-request-buy]');if(action){const attr=['data-details','data-edit','data-offer','data-close','data-request-buy'].find(a=>action.hasAttribute(a));const val=action.getAttribute(attr);const orig=[...$('listings').querySelectorAll('['+attr+']')].find(x=>x.getAttribute(attr)===val);if(orig)orig.click();}
 });
-
  const source=$('listings');if(source){const observer=new MutationObserver(()=>{if(document.body.dataset.currentView==='home')updateHome()});observer.observe(source,{childList:true});}
 window.addEventListener('hashchange',()=>navigate(routeFromHash(),{hash:false}));
 // Existing dashboard actions can scroll to a hidden view: switch to it first.
