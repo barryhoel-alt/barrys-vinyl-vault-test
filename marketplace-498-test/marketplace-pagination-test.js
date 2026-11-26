@@ -48,36 +48,60 @@ async function connect(){
 async function api(table,method='GET',payload=null,query=''){if(!config?.token)throw Error('Connect your account first');const res=await fetch(config.url.replace(/\/$/,'')+'/rest/v1/'+table+query,{method,headers:{apikey:config.pub,Authorization:'Bearer '+config.token,'Content-Type':'application/json',Prefer:'return=representation'},body:payload?JSON.stringify(payload):undefined});const body=await res.text();let obj;try{obj=body?JSON.parse(body):null}catch{obj=body}if(!res.ok)throw Error(obj?.message||obj?.error||'HTTP '+res.status);return obj}
 let releaseResults=[], selectedReleaseId=null;
 async function lookupAlbum(){
- const f=$('listingForm');const artist=f.elements.artist.value.trim(),album=f.elements.album.value.trim();
+ const f=$('listingForm'),artist=f.elements.artist.value.trim(),album=f.elements.album.value.trim();
  if(!artist||!album){$('lookupStatus').textContent='Enter an artist and album title first.';return}
- $('lookupStatus').textContent='Searching MusicBrainz…';$('releaseSelect').innerHTML='<option value="">Searching…</option>';
+ $('lookupStatus').textContent='Searching for matching releases…';$('releaseSelect').innerHTML='<option value="">Searching…</option>';
+ releaseResults=[];selectedReleaseId=null;
  try{
   const query='artist:"'+artist.replace(/"/g,'')+'" AND release:"'+album.replace(/"/g,'')+'"';
-  const url='https://musicbrainz.org/ws/2/release/?query='+encodeURIComponent(query)+'&fmt=json&limit=25';
-  const response=await fetch(url,{headers:{Accept:'application/json'}});
-  if(!response.ok)throw Error('MusicBrainz returned '+response.status);
-  const data=await response.json();releaseResults=(data.releases||[]).filter(r=>r.id);
-  $('releaseSelect').innerHTML='<option value="">Choose the correct release…</option>'+releaseResults.map((r,i)=>'<option value="'+i+'">'+esc([r.title,r.date,r.country,r['packaging'],(r['label-info']||[]).map(x=>x['catalog-number']).filter(Boolean).join(', ')].filter(Boolean).join(' · '))+'</option>').join('');
-  $('lookupStatus').textContent=releaseResults.length?releaseResults.length+' possible releases. Select the correct pressing.':'No matching release found. Enter cover and tracks manually.';
- }catch(e){$('lookupStatus').textContent='Lookup unavailable: '+e.message+'. You can enter the information manually.';$('releaseSelect').innerHTML='<option value="">No results</option>'}
+  const response=await fetch('https://musicbrainz.org/ws/2/release/?query='+encodeURIComponent(query)+'&fmt=json&limit=25',{headers:{Accept:'application/json'}});
+  if(!response.ok)throw Error('MusicBrainz HTTP '+response.status);
+  const data=await response.json();releaseResults=(data.releases||[]).filter(r=>r.id).map(r=>({...r,source:'musicbrainz'}));
+  if(!releaseResults.length)throw Error('No matching MusicBrainz releases');
+  $('lookupStatus').textContent=releaseResults.length+' possible releases. Select the correct pressing.';
+ }catch(primaryError){
+  try{
+   const term=encodeURIComponent(artist+' '+album);
+   const response=await fetch('https://itunes.apple.com/search?term='+term+'&entity=album&media=music&limit=50');
+   if(!response.ok)throw Error('Artwork fallback HTTP '+response.status);
+   const data=await response.json();
+   const norm=x=>String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+   releaseResults=(data.results||[]).filter(r=>r.collectionId&&norm(r.artistName).includes(norm(artist))&&norm(r.collectionName).includes(norm(album))).slice(0,20).map(r=>({source:'itunes',id:String(r.collectionId),title:r.collectionName,date:(r.releaseDate||'').slice(0,10),country:r.country,artist:r.artistName,artwork:r.artworkUrl100}));
+   $('lookupStatus').textContent=releaseResults.length?'MusicBrainz unavailable. Found '+releaseResults.length+' album match(es) from an alternate catalog. Edition and pressing are NOT verified.':'No matches from either catalog. Enter details, cover URL and tracks manually.';
+  }catch(fallbackError){$('lookupStatus').textContent='Automatic lookup unavailable ('+primaryError.message+'). Enter details, cover URL and tracks manually.'}
+ }
+ $('releaseSelect').innerHTML='<option value="">Choose an album / release…</option>'+releaseResults.map((r,i)=>'<option value="'+i+'">'+esc([r.title,r.artist,r.date,r.country,r.source==='itunes'?'Edition unverified':''].filter(Boolean).join(' · '))+'</option>').join('');
 }
 async function applyRelease(){
  const index=$('releaseSelect').value,r=releaseResults[Number(index)];if(index===''||!r){$('lookupStatus').textContent='Select a release first.';return}
- $('lookupStatus').textContent='Loading release details…';
+ $('lookupStatus').textContent='Loading album details…';
  try{
-  const response=await fetch('https://musicbrainz.org/ws/2/release/'+encodeURIComponent(r.id)+'?inc=recordings+artist-credits&fmt=json',{headers:{Accept:'application/json'}});
-  if(!response.ok)throw Error('Release details returned '+response.status);
-  const data=await response.json(),lines=[];
-  (data.media||[]).forEach((disc,di)=>{lines.push('Disc '+(disc.position||di+1)+':');(disc.tracks||[]).forEach(t=>lines.push((t.number||t.position||'')+'. '+(t.title||t.recording?.title||'Unknown')))});
+  let lines=[],imageUrl='';
+  if(r.source==='itunes'){
+   const response=await fetch('https://itunes.apple.com/lookup?id='+encodeURIComponent(r.id)+'&entity=song&limit=200');
+   if(!response.ok)throw Error('Track lookup HTTP '+response.status);
+   const data=await response.json();
+   const songs=(data.results||[]).filter(t=>t.wrapperType==='track'&&String(t.collectionId)===r.id).sort((a,b)=>(a.discNumber||1)-(b.discNumber||1)||(a.trackNumber||0)-(b.trackNumber||0));
+   let disc=0;songs.forEach(t=>{if((t.discNumber||1)!==disc){disc=t.discNumber||1;if(songs.some(x=>(x.discNumber||1)!==disc))lines.push('Disc '+disc+':')}lines.push((t.trackNumber||'')+'. '+t.trackName)});
+   imageUrl=(r.artwork||'').replace(/100x100bb/,'600x600bb');
+   selectedReleaseId=null;
+   $('lookupStatus').textContent='Loaded '+songs.length+' catalog tracks and available artwork. IMPORTANT: pressing and vinyl track order are not verified; review before publishing.';
+  }else{
+   const response=await fetch('https://musicbrainz.org/ws/2/release/'+encodeURIComponent(r.id)+'?inc=recordings+artist-credits&fmt=json',{headers:{Accept:'application/json'}});
+   if(!response.ok)throw Error('Release details HTTP '+response.status);
+   const data=await response.json();
+   (data.media||[]).forEach((disc,di)=>{lines.push('Disc '+(disc.position||di+1)+':');(disc.tracks||[]).forEach(t=>lines.push((t.number||t.position||'')+'. '+(t.title||t.recording?.title||'Unknown')))});
+   if(!$('listingForm').elements.pressing.value.trim())$('listingForm').elements.pressing.value=[r.date,r.country,(r['label-info']||[]).map(x=>x['catalog-number']).filter(Boolean).join(', ')].filter(Boolean).join(' · ').slice(0,200);
+   selectedReleaseId=r.id;imageUrl='https://coverartarchive.org/release/'+encodeURIComponent(r.id)+'/front-250';
+   $('lookupStatus').textContent='Loaded '+lines.filter(x=>!x.endsWith(':')).length+' tracks. Review artwork, pressing and tracks before publishing.';
+  }
   const f=$('listingForm');f.elements.tracklist_editor.value=lines.join('\n');
-  if(!f.elements.pressing.value.trim())f.elements.pressing.value=[r.date,r.country,(r['label-info']||[]).map(x=>x['catalog-number']).filter(Boolean).join(', ')].filter(Boolean).join(' · ').slice(0,200);
-  selectedReleaseId=r.id;
-  const imageUrl='https://coverartarchive.org/release/'+encodeURIComponent(r.id)+'/front-250';
-  f.elements.image_url.value=imageUrl;
-  const preview=$('coverPreview');preview.innerHTML='<p class="muted">Cover preview (if available):</p><img id="lookupCover" alt="Selected album cover" style="max-width:190px;max-height:190px;object-fit:contain" src="'+esc(imageUrl)+'">';
-  $('lookupCover').onerror=()=>{preview.textContent='No cover found for this pressing. Clear the cover URL or supply your own.';f.elements.image_url.value=''};
-  $('lookupStatus').textContent='Loaded '+lines.filter(x=>!x.endsWith(':')).length+' tracks. Review the pressing, artwork and tracks before publishing.';
- }catch(e){$('lookupStatus').textContent='Could not load this release: '+e.message+'. Enter details manually.'}
+  if(imageUrl){
+   f.elements.image_url.value=imageUrl;
+   const preview=$('coverPreview');preview.innerHTML='<p class="muted">Cover preview (if available):</p><img id="lookupCover" alt="Selected album cover" style="max-width:190px;max-height:190px;object-fit:contain" src="'+esc(imageUrl)+'">';
+   $('lookupCover').onerror=()=>{preview.textContent='No cover found. Enter your own permitted cover URL.';f.elements.image_url.value=''};
+  }
+ }catch(e){$('lookupStatus').textContent='Could not load album details: '+e.message+'. Enter cover and tracks manually.'}
 }
 function fillRecords(){let rows=[];try{rows=JSON.parse(localStorage.getItem(LOCAL)||'[]');if(!Array.isArray(rows))rows=[]}catch{}$('recordSelect').innerHTML='<option value="">Manual listing</option>'+rows.map((r,i)=>'<option value="'+i+'">'+esc((r.artist||'')+' — '+(r.album||'')+' ('+(r.id||'')+')')+'</option>').join('');$('recordSelect').onchange=()=>{const r=rows[Number($('recordSelect').value)];if($('recordSelect').value===''||!r)return;const f=$('listingForm');for(const [k,v] of Object.entries({artist:r.artist,album:r.album,pressing:r.pressing,condition:r.condition,region:r.country,image_url:/^https:\/\//i.test(r.cover||'')?r.cover:''})){if(f.elements[k])f.elements[k].value=v||''}}}
 const PAGE_SIZE=24;
