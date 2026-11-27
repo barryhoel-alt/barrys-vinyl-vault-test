@@ -37,7 +37,7 @@ export async function mountEtransferPayment({container, supabase, sale, onChange
     const {data:reads,error:readError}=await supabase.from("marketplace_payment_notification_reads").select("event_type").eq("sale_id",sale.id);
     if(!readError){
       const unseen=unread.filter(e=>!(reads||[]).some(r=>r.event_type===e.event_type));
-      if(unseen.length){panel.append(el("p",unseen.length+" new payment update(s)"));button("Mark updates read",async()=>{try{for(const e of unseen){const {error}=await supabase.from("marketplace_payment_notification_reads").insert({sale_id:sale.id,event_type:e.event_type});if(error&&error.code!=="23505")throw error;}await render();}catch(error){status.textContent=error.message;}});}
+      if(unseen.length){panel.append(el("p",unseen.length+" new payment update(s)"));button("Mark updates read",async()=>{try{for(const e of unseen){const {error}=await supabase.from("marketplace_payment_notification_reads").insert({sale_id:sale.id,event_type:e.event_type});if(error&&error.code!=="23505")throw error;}await render();await onChange();}catch(error){status.textContent=error.message;}});}
     }
     if (!instructions&&!pickup) {
       panel.append(el("p","Awaiting seller payment instructions."));
@@ -63,6 +63,10 @@ export async function mountEtransferPayment({container, supabase, sale, onChange
         if(!seller)button(pickup?"Mark cash paid":"Mark payment sent",()=>{if(window.confirm("Have you actually paid the full agreed amount?"))act(pickup?"cash_paid":"sent");});
       }
     }
+    const {data:disputes,error:disputeError}=await supabase.from("marketplace_disputes").select("id,status,reason").eq("sale_id",sale.id);
+    if(disputeError)panel.append(el("p","Dispute status unavailable."));
+    else if(disputes?.length)for(const d of disputes)panel.append(el("p","Dispute: "+d.status+" — "+d.reason));
+    if(events.has("refund_sent"))panel.append(el("p","Refund reports do not automatically close a dispute. Any open dispute remains subject to the existing resolution process."));
     panel.append(status);
   }
   try { await render(); } catch (err) { panel.append(el("p",err?.message || "Unable to load payment status.")); }
