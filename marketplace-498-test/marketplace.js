@@ -7,6 +7,47 @@ const FORMAT_MARKER=/^\[Format: (Vinyl|CD|Cassette|DVD \/ Blu-ray|Memorabilia)\]
  const SETTINGS='barry_marketplace_test_connection_v1', AUTH='barry_marketplace_test_session_v1', LOCAL='barry_vinyl_vault_v33_cloud_local';
 let config=null,listings=[],chosen=null,offerRows=[],salesRows=[],reviewRows=[],reviewSaleId=null,dashboardTab="incoming",counterId=null,buyerRevisionId=null;
 function status(s){$('authStatus').textContent=s}
+const paymentModuleUrl = new URL('./etransfer-payment.js', document.currentScript?.src || location.href).href;
+const paymentStagingOrigin = 'https://vzdekkqqmetqobxlztyk.supabase.co';
+async function mountSalePaymentPanels(panel) {
+  const session = config;
+  if (!session?.uid || session.url.replace(/\/$/,'') !== paymentStagingOrigin) return;
+  const assertSession = () => { if (config !== session) throw Error('Session changed. Refresh the dashboard.'); };
+  const request = async (path, options = {}) => {
+    assertSession();
+    const res = await fetch(paymentStagingOrigin + path, {...options,headers:{apikey:session.pub,Authorization:'Bearer '+session.token,'Content-Type':'application/json',Prefer:'return=minimal'}});
+    const body = await res.text(); let data = null;
+    if (body) { try { data=JSON.parse(body); } catch { throw Error('Unexpected server response'); } }
+    assertSession();
+    if (!res.ok) throw Error(data?.message || data?.error_description || 'HTTP '+res.status);
+    return data;
+  };
+  const client = {
+    auth:{getUser:async()=>{try{return {data:{user:await request('/auth/v1/user')}}}catch(error){return {error}}}},
+    from:table=>({
+      select:fields=>({eq:async(key,value)=>{try{return {data:await request('/rest/v1/'+table+'?select='+encodeURIComponent(fields)+'&'+key+'=eq.'+encodeURIComponent(value))}}catch(error){return {error}}}}),
+      insert:async(payload)=>{try{await request('/rest/v1/'+table,{method:'POST',body:JSON.stringify(payload)});return {error:null}}catch(error){return {error}}}
+    })
+  };
+  try {
+    const {mountEtransferPayment} = await import(paymentModuleUrl);
+    assertSession();
+    for (const host of panel.querySelectorAll('[data-payment-sale]')) {
+      const sale = salesRows.find(s=>s.id===host.dataset.paymentSale);
+      if(!sale || sale.currency!=='CAD' || sale.agreed_amount==null || Number(sale.agreed_amount)<=0) continue;
+      try {
+        const shipments = await request('/rest/v1/marketplace_shipments?select=sale_id&sale_id=eq.'+encodeURIComponent(sale.id));
+        if(!host.isConnected || config!==session) continue;
+        if(shipments?.length) {
+          const events=await request('/rest/v1/marketplace_payment_events?select=event_type&sale_id=eq.'+encodeURIComponent(sale.id));
+          if(!events?.length) {host.textContent='Previously shipped — payment tracking not enabled.';continue;}
+        }
+        await mountEtransferPayment({container:host,supabase:client,sale});
+      } catch(error) {host.textContent='Payment status unavailable: '+error.message;}
+    }
+  } catch(error) {for(const host of panel.querySelectorAll('[data-payment-sale]')) host.textContent='Payment controls unavailable: '+error.message;}
+}
+
 function validUrl(s){return /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(s)}
 function readJson(store,key){try{return JSON.parse(store.getItem(key)||'null')}catch{return null}}
 function persistSession(){if(config?.refreshToken)sessionStorage.setItem(AUTH,JSON.stringify({url:config.url,refreshToken:config.refreshToken}));}
@@ -104,7 +145,7 @@ function offerListing(r){return listings.find(x=>x.id===r.listing_id)||ownedList
  function renderDashboard(){const mineIds=new Set(ownedListings.map(x=>x.id));const incoming=offerRows.filter(x=>mineIds.has(x.listing_id)&&x.buyer_id!==config?.uid);const sent=offerRows.filter(x=>x.buyer_id===config?.uid);const pending=incoming.filter(x=>x.status==='pending').length;const awaitingBuyer=sent.filter(x=>x.status==='countered').length;
   $('incomingCount').textContent=incoming.length+' total · '+pending+' new';$('sentCount').textContent=sent.length+(awaitingBuyer?' · '+awaitingBuyer+' to answer':'');$('mineCount').textContent=ownedListings.filter(x=>x.status==='active').length;$('offerBadge').textContent='('+pending+')';$('salesCount').textContent=salesRows.length;
   const panel=$('dashboardPanel');if(!config?.uid){panel.innerHTML='<p class="muted">Sign in to see offers and listings.</p>';return}
-  if(dashboardTab==='sales'){panel.innerHTML='<h3>Completed sales & purchases</h3><p class="muted">Records marked sold by sellers. This is a marketplace record, not proof of payment or shipment.</p>'+(salesRows.map(s=>'<article class="offer-card sale-history-card"><div class="sale-cover">'+(s.image_url&&/^https:\/\//i.test(s.image_url)?'<img src="'+esc(s.image_url)+'" alt="Cover artwork for '+esc(s.artist+' — '+s.album)+'" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="sale-cover-empty" hidden>♫<small>Artwork unavailable</small></span>':'<span class="sale-cover-empty">♫<small>No artwork saved</small></span>')+'</div><div class="sale-info"><h3>'+esc(s.artist)+' — '+esc(s.album)+'</h3><span class="pill">'+(s.seller_id===config.uid?'Sold':'Purchased')+'</span><p class="offer-amount">'+esc(s.agreed_amount==null?'Trade agreement':money(s.agreed_amount,s.currency))+'</p><small>Marked sold: '+esc(new Date(s.completed_at).toLocaleString())+'</small>'+(reviewRows.find(r=>r.sale_id===s.id)?'<div class="review-item"><div class="review-stars">'+'★'.repeat(Number(reviewRows.find(r=>r.sale_id===s.id).rating))+'☆'.repeat(5-Number(reviewRows.find(r=>r.sale_id===s.id).rating))+'</div><p>'+esc(reviewRows.find(r=>r.sale_id===s.id).review_text||'No written review')+'</p><small>Verified buyer review</small></div>':(s.buyer_id===config.uid?'<p><button data-review-sale="'+esc(s.id)+'">Leave seller review</button></p>':'<p class="muted">No buyer review yet.</p>'))+'</div></article>').join('')||'<p class="muted">No completed transactions yet.</p>');return}
+  if(dashboardTab==='sales'){panel.innerHTML='<h3>Completed sales & purchases</h3><p class="muted">Records marked sold by sellers. This is a marketplace record, not proof of payment or shipment.</p>'+(salesRows.map(s=>'<article class="offer-card sale-history-card"><div class="sale-cover">'+(s.image_url&&/^https:\/\//i.test(s.image_url)?'<img src="'+esc(s.image_url)+'" alt="Cover artwork for '+esc(s.artist+' — '+s.album)+'" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="sale-cover-empty" hidden>♫<small>Artwork unavailable</small></span>':'<span class="sale-cover-empty">♫<small>No artwork saved</small></span>')+'</div><div class="sale-info"><h3>'+esc(s.artist)+' — '+esc(s.album)+'</h3><span class="pill">'+(s.seller_id===config.uid?'Sold':'Purchased')+'</span><p class="offer-amount">'+esc(s.agreed_amount==null?'Trade agreement':money(s.agreed_amount,s.currency))+'</p><small>Marked sold: '+esc(new Date(s.completed_at).toLocaleString())+'</small>'+(reviewRows.find(r=>r.sale_id===s.id)?'<div class="review-item"><div class="review-stars">'+'★'.repeat(Number(reviewRows.find(r=>r.sale_id===s.id).rating))+'☆'.repeat(5-Number(reviewRows.find(r=>r.sale_id===s.id).rating))+'</div><p>'+esc(reviewRows.find(r=>r.sale_id===s.id).review_text||'No written review')+'</p><small>Verified buyer review</small></div>':(s.buyer_id===config.uid?'<p><button data-review-sale="'+esc(s.id)+'">Leave seller review</button></p>':'<p class="muted">No buyer review yet.</p>'))+'<div data-payment-sale="'+esc(s.id)+'"></div></div></article>').join('')||'<p class="muted">No completed transactions yet.</p>');if(config?.uid)void mountSalePaymentPanels(panel);return}
   if(dashboardTab==='listings'){panel.innerHTML='<h3>My active listings</h3>'+ownedListings.filter(x=>x.status==='active').map(x=>'<div class="offer-card"><b>'+esc(x.artist)+' — '+esc(x.album)+'</b><p>'+esc(money(x.asking_price,x.currency))+'</p></div>').join('')||'<p>No active listings.</p>';return}
   const arr=dashboardTab==='sent'?sent:incoming;panel.innerHTML='<h3>'+(dashboardTab==='sent'?'Offers I sent':'Offers received')+'</h3>'+(arr.map(r=>{const l=offerListing(r),isSeller=mineIds.has(r.listing_id),canAct=isSeller&&r.status==='pending',canBuyerAct=dashboardTab==='sent'&&r.buyer_id===config?.uid&&r.status==='countered';return '<article class="offer-card">'+(l?.image_url?'<img src="'+esc(l.image_url)+'" alt="Album cover" loading="lazy" onerror="this.remove()">':'')+'<h3>'+esc(l?l.artist+' — '+l.album:'Listing '+r.listing_id.slice(0,8))+'</h3><span class="pill">'+esc(r.status||'pending')+'</span><p class="muted">'+esc(r.offer_type==='trade'?'Trade offer':'Purchase offer')+'</p><div class="offer-amount">'+esc(money(r.offer_amount,r.currency))+'</div>'+(l?'<p class="muted">Asking price: '+esc(money(l.asking_price,l.currency))+'</p>':'')+(r.counter_amount!=null?'<p><b>Seller counteroffer: '+esc(money(r.counter_amount,r.counter_currency||r.currency))+'</b></p>':'')+'<p>'+esc(r.message||'No message')+'</p><small>'+esc(new Date(r.created_at).toLocaleString())+'</small>'+(canAct?'<div class="row"><button data-respond="accepted" data-id="'+esc(r.id)+'">Accept</button><button data-counter="'+esc(r.id)+'">Counteroffer</button><button data-respond="declined" data-id="'+esc(r.id)+'">Decline</button></div>':'')+(isSeller&&r.status==='accepted'&&!salesRows.some(s=>s.listing_id===r.listing_id)?'<div class="row"><button data-mark-sold="'+esc(r.id)+'">Mark record sold</button></div>':'')+(canBuyerAct?'<div class="row"><button data-buyer-action="accept" data-id="'+esc(r.id)+'">Accept counteroffer</button><button data-buyer-revise="'+esc(r.id)+'">Make another offer</button><button data-buyer-action="decline" data-id="'+esc(r.id)+'">Decline</button></div>':'')+'</article>'}).join('')||'<p class="muted">No offers here yet.</p>');
  }
