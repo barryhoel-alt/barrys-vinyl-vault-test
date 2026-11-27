@@ -9,6 +9,21 @@ let config=null,listings=[],chosen=null,offerRows=[],salesRows=[],reviewRows=[],
 function status(s){$('authStatus').textContent=s}
 const paymentModuleUrl = new URL('./etransfer-payment.js', document.currentScript?.src || location.href).href;
 const paymentStagingOrigin = 'https://vzdekkqqmetqobxlztyk.supabase.co';
+let paymentBellRevision=0;
+async function refreshPaymentBell(){
+ const revision=++paymentBellRevision, session=config;
+ let bell=document.getElementById('vvPaymentBell');
+ if(!session?.uid || session.url.replace(/\/$/,'')!==paymentStagingOrigin){if(bell)bell.remove();return;}
+ if(!bell){bell=document.createElement('button');bell.id='vvPaymentBell';bell.type='button';bell.setAttribute('aria-label','Payment notifications');$('dashSales').insertAdjacentElement('afterend',bell);bell.onclick=()=>{dashboardTab='sales';renderDashboard();$('dashboardPanel').scrollIntoView({behavior:'smooth',block:'start'});};}
+ bell.textContent='🔔 Payments';
+ try{
+ const [events,reads]=await Promise.all([api('marketplace_payment_events','GET',null,'?select=sale_id,event_type,actor_id&actor_id=neq.'+encodeURIComponent(session.uid)),api('marketplace_payment_notification_reads','GET',null,'?select=sale_id,event_type')]);
+ if(config!==session||revision!==paymentBellRevision||!bell.isConnected)return;
+ const seen=new Set((reads||[]).map(e=>e.sale_id+':'+e.event_type));
+ const count=(events||[]).filter(e=>!seen.has(e.sale_id+':'+e.event_type)).length;
+ bell.textContent='🔔 Payments'+(count?' ('+count+')':'');bell.setAttribute('aria-label',count+' unread payment updates');
+ }catch(error){if(config===session&&revision===paymentBellRevision)bell.textContent='🔔 Payments (unavailable)';}
+}
 async function mountSalePaymentPanels(panel) {
   const session = config;
   if (!session?.uid || session.url.replace(/\/$/,'') !== paymentStagingOrigin) return;
@@ -42,7 +57,7 @@ async function mountSalePaymentPanels(panel) {
           const events=await request('/rest/v1/marketplace_payment_events?select=event_type&sale_id=eq.'+encodeURIComponent(sale.id));
           if(!events?.length) {host.textContent='Previously shipped — payment tracking not enabled.';continue;}
         }
-        await mountEtransferPayment({container:host,supabase:client,sale});
+        await mountEtransferPayment({container:host,supabase:client,sale,onChange:refreshPaymentBell});
       } catch(error) {host.textContent='Payment status unavailable: '+error.message;}
     }
   } catch(error) {for(const host of panel.querySelectorAll('[data-payment-sale]')) host.textContent='Payment controls unavailable: '+error.message;}
@@ -142,7 +157,7 @@ function offerListing(r){return listings.find(x=>x.id===r.listing_id)||ownedList
    const [offers,mine,sales,reviews]=await Promise.all([api('marketplace_offers','GET',null,'?select=id,listing_id,buyer_id,offer_type,offer_amount,currency,message,status,created_at,counter_amount,counter_currency&order=created_at.desc&limit=200'),api('marketplace_listings','GET',null,'?select=id,seller_id,artist,album,asking_price,currency,image_url,status&seller_id=eq.'+encodeURIComponent(config.uid)+'&limit=200'),api('marketplace_sales','GET',null,'?select=id,listing_id,offer_id,seller_id,buyer_id,artist,album,image_url,agreed_amount,currency,completed_at&order=completed_at.desc&limit=200'),api('marketplace_reviews','GET',null,'?select=id,sale_id,seller_id,rating,review_text,created_at&order=created_at.desc&limit=1000')]);
    offerRows=offers||[];ownedListings=mine||[];salesRows=sales||[];reviewRows=reviews||[];$('dashboardStatus').textContent='Updated '+new Date().toLocaleTimeString();renderDashboard();render();if(window.vv498Update)window.vv498Update({uid:config.uid,offers:offerRows,sales:salesRows,owned:ownedListings});
  }catch(err){$('dashboardStatus').textContent='Offers could not be loaded: '+err.message+' (check the 4.5 SQL update)';}}
- function renderDashboard(){const mineIds=new Set(ownedListings.map(x=>x.id));const incoming=offerRows.filter(x=>mineIds.has(x.listing_id)&&x.buyer_id!==config?.uid);const sent=offerRows.filter(x=>x.buyer_id===config?.uid);const pending=incoming.filter(x=>x.status==='pending').length;const awaitingBuyer=sent.filter(x=>x.status==='countered').length;
+ function renderDashboard(){void refreshPaymentBell();const mineIds=new Set(ownedListings.map(x=>x.id));const incoming=offerRows.filter(x=>mineIds.has(x.listing_id)&&x.buyer_id!==config?.uid);const sent=offerRows.filter(x=>x.buyer_id===config?.uid);const pending=incoming.filter(x=>x.status==='pending').length;const awaitingBuyer=sent.filter(x=>x.status==='countered').length;
   $('incomingCount').textContent=incoming.length+' total · '+pending+' new';$('sentCount').textContent=sent.length+(awaitingBuyer?' · '+awaitingBuyer+' to answer':'');$('mineCount').textContent=ownedListings.filter(x=>x.status==='active').length;$('offerBadge').textContent='('+pending+')';$('salesCount').textContent=salesRows.length;
   const panel=$('dashboardPanel');if(!config?.uid){panel.innerHTML='<p class="muted">Sign in to see offers and listings.</p>';return}
   if(dashboardTab==='sales'){panel.innerHTML='<h3>Completed sales & purchases</h3><p class="muted">Records marked sold by sellers. This is a marketplace record, not proof of payment or shipment.</p>'+(salesRows.map(s=>'<article class="offer-card sale-history-card"><div class="sale-cover">'+(s.image_url&&/^https:\/\//i.test(s.image_url)?'<img src="'+esc(s.image_url)+'" alt="Cover artwork for '+esc(s.artist+' — '+s.album)+'" loading="lazy" referrerpolicy="no-referrer" onerror="this.hidden=true;this.nextElementSibling.hidden=false"><span class="sale-cover-empty" hidden>♫<small>Artwork unavailable</small></span>':'<span class="sale-cover-empty">♫<small>No artwork saved</small></span>')+'</div><div class="sale-info"><h3>'+esc(s.artist)+' — '+esc(s.album)+'</h3><span class="pill">'+(s.seller_id===config.uid?'Sold':'Purchased')+'</span><p class="offer-amount">'+esc(s.agreed_amount==null?'Trade agreement':money(s.agreed_amount,s.currency))+'</p><small>Marked sold: '+esc(new Date(s.completed_at).toLocaleString())+'</small>'+(reviewRows.find(r=>r.sale_id===s.id)?'<div class="review-item"><div class="review-stars">'+'★'.repeat(Number(reviewRows.find(r=>r.sale_id===s.id).rating))+'☆'.repeat(5-Number(reviewRows.find(r=>r.sale_id===s.id).rating))+'</div><p>'+esc(reviewRows.find(r=>r.sale_id===s.id).review_text||'No written review')+'</p><small>Verified buyer review</small></div>':(s.buyer_id===config.uid?'<p><button data-review-sale="'+esc(s.id)+'">Leave seller review</button></p>':'<p class="muted">No buyer review yet.</p>'))+'<div data-payment-sale="'+esc(s.id)+'"></div></div></article>').join('')||'<p class="muted">No completed transactions yet.</p>');if(config?.uid)void mountSalePaymentPanels(panel);return}
